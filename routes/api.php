@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\PackageController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\TransactionController;
+use App\Http\Controllers\Api\ReportController;
 
 // 1. Publik
 Route::post('/login', [AuthController::class, 'login']);
@@ -20,6 +21,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/packages', [PackageController::class, 'index']);
     Route::get('/products', [ProductController::class, 'index']);
     Route::post('/transactions', [TransactionController::class, 'store']);
+    Route::get('/export/excel', [ReportController::class, 'exportExcel']);
+    Route::get('/export/pdf', [ReportController::class, 'exportPdf']);
 
     // 3. KHUSUS Superadmin (Owner) - Mengelola Akun Admin
     // Kita asumsikan middleware-nya diberi nama 'role'
