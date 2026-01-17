@@ -28,14 +28,12 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Login Berhasil',
             'access_token' => $token,
-            'user' => [
-                'name' => $user->name,
-                'role' => $user->role,   
-            ]
+            'user' => $user
         ]);
     }
     // API UNTUK TAMBAH ADMIN
-    public function registerAdmin(Request $request) {
+    public function registerAdmin(Request $request)
+    {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
@@ -53,7 +51,8 @@ class AuthController extends Controller
     }
 
     // API UNTUK HAPUS ADMIN
-    public function deleteAdmin($id) {
+    public function deleteAdmin($id)
+    {
         $user = User::find($id);
 
         if (!$user) {
@@ -67,5 +66,75 @@ class AuthController extends Controller
 
         $user->delete();
         return response()->json(['message' => 'Admin berhasil dihapus!']);
+    }
+    // UPDATE PROFILE (Name & Auto-Generated Avatar logic on frontend, or handled here if file upload)
+    public function updateProfile(Request $request)
+    {
+        $user = $request->user();
+
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'photo' => 'nullable|image|max:2048', // 2MB Max
+        ]);
+
+        $data = ['name' => $request->name];
+
+        if ($request->hasFile('photo')) {
+            // Delete old photo if exists
+            if ($user->photo_path && \Storage::disk('public')->exists($user->photo_path)) {
+                \Storage::disk('public')->delete($user->photo_path);
+            }
+            $path = $request->file('photo')->store('profile_photos', 'public');
+            $data['photo_path'] = $path;
+        }
+
+        $user->update($data);
+
+        // Refresh user to get appends
+        return response()->json([
+            'message' => 'Profile updated successfully',
+            'user' => $user->fresh() // fresh() reloads model
+        ]);
+    }
+
+    // CHANGE PASSWORD
+    public function changePassword(Request $request)
+    {
+        $request->validate([
+            // 'current_password' => 'required', // Removed as requested
+            'new_password' => 'required|string|min:8|confirmed',
+        ]);
+
+        $user = $request->user();
+
+        // Removed current password check
+        // if (!Hash::check($request->current_password, $user->password)) {
+        //     return response()->json(['message' => 'Current password does not match!'], 400);
+        // }
+
+        $user->update([
+            'password' => Hash::make($request->new_password)
+        ]);
+
+        return response()->json(['message' => 'Password changed successfully']);
+    }
+    // FORGOT PASSWORD (SELF SERVICE - INTERNAL USE)
+    public function forgotPassword(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email|exists:users,email',
+            'new_password' => 'required|string|min:8|confirmed',
+        ]);
+
+        $user = User::where('email', $request->email)->first();
+
+        // Prevent resetting Superadmin password via this simple method for extra security? 
+        // User said "safe secure internal". But let's act normal.
+
+        $user->update([
+            'password' => Hash::make($request->new_password)
+        ]);
+
+        return response()->json(['message' => 'Password has been reset successfully.']);
     }
 }

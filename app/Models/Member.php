@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Member extends Model
 {
-    protected $fillable = ['member_code', 'name', 'status', 'current_expiry_date'];
+    protected $fillable = ['member_code', 'name', 'address', 'status', 'current_expiry_date', 'category'];
 
     // Relasi: Satu member bisa punya banyak transaksi
     public function transactions()

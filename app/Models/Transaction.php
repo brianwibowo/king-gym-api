@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Transaction extends Model
 {
-    protected $fillable = ['user_id', 'member_id', 'total_amount', 'payment_method', 'transaction_type'];
+    protected $fillable = ['user_id', 'member_id', 'customer_name', 'total_amount', 'payment_method', 'transaction_type'];
 
     // Relasi: Satu transaksi punya banyak detail barang/paket yang dibeli
     public function details()
