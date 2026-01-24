@@ -23,6 +23,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/members', [MemberController::class, 'store']);
     Route::put('/members/{id}', [MemberController::class, 'update']);
     Route::delete('/members/{id}', [MemberController::class, 'destroy']);
+    Route::get('/members/{id}/history', [MemberController::class, 'history']);
+    Route::post('/members/{id}/renew', [MemberController::class, 'renew']);
 
     Route::get('/packages', [PackageController::class, 'index']);
     Route::get('/products', [ProductController::class, 'index']);
@@ -36,6 +38,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/transactions/{id}', [TransactionController::class, 'update']);
     Route::delete('/transactions/{id}', [TransactionController::class, 'destroy']);
 
+    // Expenses
+    Route::apiResource('expenses', \App\Http\Controllers\Api\ExpenseController::class);
+
+    // Member Export
+    Route::get('/members/export', [MemberController::class, 'exportExcel']);
+
     Route::get('/export/excel', [ReportController::class, 'exportExcel']);
     Route::get('/export/pdf', [ReportController::class, 'exportPdf']);
 
@@ -43,6 +51,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/attendance/clock-in', [AttendanceController::class, 'clockIn']);
     Route::post('/attendance/clock-out', [AttendanceController::class, 'clockOut']);
     Route::get('/attendance/history', [AttendanceController::class, 'index']);
+    Route::get('/attendance/export-shift', [AttendanceController::class, 'exportShift']);
+    Route::get('/attendance/rekap-shift', [AttendanceController::class, 'getShiftRecap']);
 
     // Packages
     Route::get('/packages', [\App\Http\Controllers\Api\PackageController::class, 'index']);

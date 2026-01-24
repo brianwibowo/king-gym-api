@@ -104,4 +104,73 @@ class AttendanceController extends Controller
             'data' => $attendance
         ]);
     }
+
+    public function exportShift(Request $request)
+    {
+        $request->validate([
+            'month' => 'required|integer|min:1|max:12',
+            'year' => 'required|integer|min:2020'
+        ]);
+
+        $month = $request->month;
+        $year = $request->year;
+
+        $filename = "rekap-shift-{$month}-{$year}.xlsx";
+
+        return \Maatwebsite\Excel\Facades\Excel::download(new \App\Exports\ShiftReportExport($month, $year), $filename);
+    }
+
+    public function getShiftRecap(Request $request)
+    {
+        $request->validate([
+            'month' => 'required|integer|min:1|max:12',
+            'year' => 'required|integer|min:2020'
+        ]);
+
+        $month = $request->month;
+        $year = $request->year;
+
+        // Logic Duplicate from Export (Quick Implementation)
+        $users = \App\Models\User::where('role', '!=', 'member')
+            ->orderBy('name', 'asc')
+            ->get();
+
+        $data = [];
+
+        foreach ($users as $user) {
+            $attendances = Attendance::where('user_id', $user->id)
+                ->whereMonth('created_at', $month)
+                ->whereYear('created_at', $year)
+                ->get();
+
+            $pagi = 0;
+            $sore = 0;
+
+            foreach ($attendances as $att) {
+                if (!$att->clock_in)
+                    continue;
+
+                $time = Carbon::parse($att->clock_in);
+                $hour = $time->hour;
+
+                if ($hour >= 6 && $hour < 14) {
+                    $pagi++;
+                } elseif ($hour >= 14 && $hour <= 22) {
+                    $sore++;
+                }
+            }
+
+            if ($pagi > 0 || $sore > 0) {
+                $data[] = [
+                    'name' => $user->name,
+                    'role' => $user->role,
+                    'pagi' => $pagi,
+                    'sore' => $sore,
+                    'total' => $pagi + $sore
+                ];
+            }
+        }
+
+        return response()->json($data);
+    }
 }

@@ -136,10 +136,12 @@ class DashboardController extends Controller
 
         $query = DB::table('transaction_details')
             ->join('transactions', 'transaction_details.transaction_id', '=', 'transactions.id')
+            ->leftJoin('products', 'transaction_details.item_name', '=', 'products.name') // Join to get stock
             ->select(
                 'transaction_details.item_name',
                 DB::raw('SUM(transaction_details.qty) as total_qty'),
-                DB::raw('SUM(transaction_details.subtotal) as total_revenue')
+                DB::raw('SUM(transaction_details.subtotal) as total_revenue'),
+                DB::raw('MAX(products.stock) as current_stock') // Use MAX (since grouped by name, stock should be same)
             )
             ->groupBy('transaction_details.item_name');
 
@@ -158,8 +160,14 @@ class DashboardController extends Controller
         // Get Aggregated Data
         $results = $query->get();
 
-        // Sort for Top 3
-        $topSelling = $results->sortByDesc('total_qty')->take(3)->values();
+        // Sort for Top 3 (or User defined limit)
+        $limit = $request->input('limit', 3);
+
+        if ($limit == 'all') {
+            $topSelling = $results->sortByDesc('total_qty')->values();
+        } else {
+            $topSelling = $results->sortByDesc('total_qty')->take((int) $limit)->values();
+        }
 
         // Sort for Bottom 3 (Least Selling)
         // Only consider items that have at least 1 sale in this period (since we query transaction_details).

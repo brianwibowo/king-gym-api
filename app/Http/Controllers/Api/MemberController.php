@@ -21,6 +21,7 @@ class MemberController extends Controller
             'name' => 'required',
             'package_id' => 'required|exists:packages,id', // Must select a package
             'payment_method' => 'required', // qris, cash, transfer
+            'phone' => 'nullable|string'
         ]);
 
         return \Illuminate\Support\Facades\DB::transaction(function () use ($request) {
@@ -31,6 +32,7 @@ class MemberController extends Controller
                 'member_code' => $request->member_code,
                 'name' => $request->name,
                 'address' => $request->address,
+                'phone' => $request->phone,
                 'category' => $package->category, // Auto-set category from package
                 'status' => 'active',
                 'current_expiry_date' => now()->addDays($package->duration_days),
@@ -48,6 +50,8 @@ class MemberController extends Controller
                 'total_amount' => $package->price,
                 'payment_method' => $request->payment_method,
                 'transaction_type' => 'membership',
+                'membership_start_date' => now(),
+                'membership_end_date' => now()->addDays($package->duration_days),
             ]);
 
             // 3. Create Transaction Detail
@@ -75,7 +79,8 @@ class MemberController extends Controller
             'name' => 'sometimes|required',
             'status' => 'sometimes|required',
             'current_expiry_date' => 'sometimes|date',
-            'package_id' => 'sometimes|exists:packages,id'
+            'package_id' => 'sometimes|exists:packages,id',
+            'phone' => 'nullable|string'
         ]);
 
         // If package changes, maybe update category or extend date? 
@@ -109,5 +114,86 @@ class MemberController extends Controller
         return response()->json([
             'message' => 'Member deleted successfully'
         ]);
+    }
+
+    public function exportExcel()
+    {
+        $filename = "members-rekap-" . date('d-m-Y') . ".xlsx";
+        return \Maatwebsite\Excel\Facades\Excel::download(new \App\Exports\MembersExport, $filename);
+    }
+
+    public function history($id)
+    {
+        $transactions = \App\Models\Transaction::where('member_id', $id)
+            ->orderBy('created_at', 'desc')
+            ->with(['details', 'user']) // Load details and cashier
+            ->get();
+
+        return response()->json([
+            'data' => $transactions
+        ]);
+    }
+
+    public function renew(Request $request, $id)
+    {
+        $request->validate([
+            'package_id' => 'required|exists:packages,id',
+            'payment_method' => 'required', // qris, cash, transfer
+        ]);
+
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($request, $id) {
+            $member = Member::findOrFail($id);
+            $package = \App\Models\Package::findOrFail($request->package_id);
+
+            // 1. Calculate New Expiry Date
+            $now = now();
+            $currentExpiry = \Carbon\Carbon::parse($member->current_expiry_date);
+
+            // Logic for Start Date and End Date
+            $startDate = null;
+
+            if ($currentExpiry->gt($now)) {
+                $startDate = $currentExpiry->copy(); // Starts when old one ends
+                $newExpiry = $currentExpiry->addDays($package->duration_days);
+            } else {
+                $startDate = $now->copy(); // Starts today
+                $newExpiry = $now->copy()->addDays($package->duration_days);
+            }
+
+            // 2. Update Member
+            $member->update([
+                'current_expiry_date' => $newExpiry,
+                'status' => 'active', // Ensure active
+                'category' => $package->category // Update category if package changes
+            ]);
+
+            // 3. Create Transaction
+            $userId = auth()->id() ?? 1;
+
+            $transaction = \App\Models\Transaction::create([
+                'user_id' => $userId,
+                'member_id' => $member->id,
+                'customer_name' => $member->name,
+                'total_amount' => $package->price,
+                'payment_method' => $request->payment_method,
+                'transaction_type' => 'membership',
+                'membership_start_date' => $startDate,
+                'membership_end_date' => $newExpiry,
+            ]);
+
+            \App\Models\TransactionDetail::create([
+                'transaction_id' => $transaction->id,
+                'item_name' => $package->name, // e.g., "1 Bulan"
+                'price' => $package->price,
+                'qty' => 1,
+                'subtotal' => $package->price
+            ]);
+
+            return response()->json([
+                'message' => 'Membership renewed successfully',
+                'data' => $member,
+                'new_expiry' => $newExpiry->format('Y-m-d')
+            ]);
+        });
     }
 }

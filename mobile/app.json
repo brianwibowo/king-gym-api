@@ -31,7 +31,8 @@
           "photosPermission": "The app accesses your photos to let you upload a profile picture or product image.",
           "cameraPermission": "The app accesses your camera to let you take a photo for attendance."
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ]
   }
 }
