@@ -2,80 +2,124 @@
 <html>
 
 <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <style>
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
-            font-family: Arial, sans-serif;
+            margin-bottom: 20px;
         }
 
         th,
         td {
-            border: 1px solid black;
+            border: 1px solid #000;
             padding: 6px;
-            font-size: 12px;
-            text-align: right;
         }
 
         th {
-            background-color: #f2f2f2;
+            background-color: #cccccc;
             font-weight: bold;
             text-align: center;
         }
 
-        .month-col {
-            text-align: left;
+        .text-center {
+            text-align: center;
         }
 
-        .total-row {
+        .text-right {
+            text-align: right;
+        }
+
+        .bold {
             font-weight: bold;
-            background-color: #e6e6e6;
+        }
+
+        .header {
+            text-align: center;
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            background-color: #ffff00;
+            font-weight: bold;
+            text-align: left;
         }
     </style>
 </head>
 
 <body>
-    <div style="text-align: center; font-weight: bold; font-size: 16px; margin-bottom: 20px;">
-        Laporan Tahunan King Fitness Gym<br>
-        Tahun: {{ $year }}
-    </div>
+    <div class="header">LAPORAN TAHUNAN {{ $year }} - KING FITNESS SEMARANG</div>
 
+    <!-- MEMBERSHIP SALES -->
     <table>
-        <thead>
+        <tr>
+            <td colspan="3" class="section-title">PENJUALAN MEMBERSHIP (TOTAL SETAHUN)</td>
+        </tr>
+        <tr>
+            <th>Nama Paket</th>
+            <th>Qty Terjual</th>
+            <th>Total Pendapatan</th>
+        </tr>
+        @forelse($sales['MEMBERSHIP'] as $item)
             <tr>
-                <th>Bulan</th>
-                <th>Total Transaksi (Trx)</th>
-                <th>Pemasukan Membership</th>
-                <th>Pemasukan Produk</th>
-                <th>Total Pemasukan</th>
-                <th>Total Pengeluaran</th>
-                <th>Net Profit</th>
+                <td>{{ $item['name'] }}</td>
+                <td class="text-center">{{ $item['qty'] }}</td>
+                <td class="text-right">Rp {{ number_format($item['total'], 0, ',', '.') }}</td>
             </tr>
-        </thead>
-        <tbody>
-            @foreach($data as $row)
-                <tr>
-                    <td class="month-col">{{ $row['month_name'] }}</td>
-                    <td>{{ number_format($row['trx_count'], 0, ',', '.') }}</td>
-                    <td>{{ number_format($row['income_membership'], 0, ',', '.') }}</td>
-                    <td>{{ number_format($row['income_product'], 0, ',', '.') }}</td>
-                    <td style="font-weight: bold;">{{ number_format($row['total_income'], 0, ',', '.') }}</td>
-                    <td style="color: red;">{{ number_format($row['total_expense'], 0, ',', '.') }}</td>
-                    <td style="font-weight: bold; color: {{ $row['net_profit'] >= 0 ? 'green' : 'red' }};">
-                        {{ number_format($row['net_profit'], 0, ',', '.') }}
-                    </td>
-                </tr>
-            @endforeach
-            <tr class="total-row">
-                <td class="month-col">TOTAL TAHUN INI</td>
-                <td>{{ number_format(collect($data)->sum('trx_count'), 0, ',', '.') }}</td>
-                <td>{{ number_format(collect($data)->sum('income_membership'), 0, ',', '.') }}</td>
-                <td>{{ number_format(collect($data)->sum('income_product'), 0, ',', '.') }}</td>
-                <td>{{ number_format(collect($data)->sum('total_income'), 0, ',', '.') }}</td>
-                <td>{{ number_format(collect($data)->sum('total_expense'), 0, ',', '.') }}</td>
-                <td>{{ number_format(collect($data)->sum('net_profit'), 0, ',', '.') }}</td>
+        @empty
+            <tr>
+                <td colspan="3" class="text-center">- Tidak ada data -</td>
             </tr>
-        </tbody>
+        @endforelse
+    </table>
+
+    <!-- PRODUCT SALES -->
+    <table>
+        <tr>
+            <td colspan="3" class="section-title">PENJUALAN PRODUK &amp; MINUMAN (TOTAL SETAHUN)</td>
+        </tr>
+        <tr>
+            <th>Nama Produk</th>
+            <th>Qty Terjual</th>
+            <th>Total Pendapatan</th>
+        </tr>
+        @forelse($sales['PENJUALAN (PRODUK)'] as $item)
+            <tr>
+                <td>{{ $item['name'] }}</td>
+                <td class="text-center">{{ $item['qty'] }}</td>
+                <td class="text-right">Rp {{ number_format($item['total'], 0, ',', '.') }}</td>
+            </tr>
+        @empty
+            <tr>
+                <td colspan="3" class="text-center">- Tidak ada data -</td>
+            </tr>
+        @endforelse
+    </table>
+
+    <!-- SUMMARY -->
+    <table>
+        <tr>
+            <td colspan="2" class="section-title">RINGKASAN TAHUN {{ $year }}</td>
+        </tr>
+        <tr>
+            <td>Total Pemasukan (Gross)</td>
+            <td class="text-right bold">Rp {{ number_format($totalIncome, 0, ',', '.') }}</td>
+        </tr>
+        <tr>
+            <td>Total Pengeluaran</td>
+            <td class="text-right bold" style="color: red;">- Rp {{ number_format($totalExpense, 0, ',', '.') }}</td>
+        </tr>
+        <tr style="background-color: #ffff99;">
+            <td class="bold">NET PROFIT (BERSIH)</td>
+            <td class="text-right bold">Rp {{ number_format($netProfit, 0, ',', '.') }}</td>
+        </tr>
     </table>
 </body>
 

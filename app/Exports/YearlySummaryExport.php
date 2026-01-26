@@ -21,48 +21,66 @@ class YearlySummaryExport implements FromView, ShouldAutoSize
 
     public function view(): View
     {
-        $data = [];
+        // 1. Fetch Year Data
+        $startYear = Carbon::create($this->year, 1, 1)->startOfYear();
+        $endYear = Carbon::create($this->year, 12, 31)->endOfYear();
 
-        for ($m = 1; $m <= 12; $m++) {
-            $start = Carbon::create($this->year, $m, 1)->startOfMonth();
-            $end = Carbon::create($this->year, $m, 1)->endOfMonth();
+        $transactions = Transaction::with(['details'])
+            ->whereBetween('created_at', [$startYear, $endYear])
+            ->get();
 
-            // Aggregates
-            // Income
-            $incomeMembership = Transaction::whereBetween('created_at', [$start, $end])
-                ->where('transaction_type', 'membership')
-                ->sum('total_amount');
+        $expenses = Expense::whereBetween('date', [$startYear->format('Y-m-d'), $endYear->format('Y-m-d')])
+            ->get();
 
-            // Product (Includes 'mix' type partially? Or just sum non-membership? Let's assume mix is product+memb, but backend stores simplified. User usually separates by type.)
-            // If type can be 'product', 'membership', 'mix'.
-            // For now, let's group anything NOT membership as product for simplicity, OR specifically.
-            $incomeProduct = Transaction::whereBetween('created_at', [$start, $end])
-                ->whereIn('transaction_type', ['product', 'mix']) // Add mix here? Or handle separately?
-                ->sum('total_amount'); // Simplified. If 'mix' exists, maybe split logic needed?
-            // Assuming 'mix' is rare or handled elsewhere. Let's put in 'Product/Other'.
+        // 2. Aggregate Sales (Membership vs Products)
+        $groupedSales = [
+            'MEMBERSHIP' => [],
+            'PENJUALAN (PRODUK)' => []
+        ];
 
-            $totalIncome = $incomeMembership + $incomeProduct;
+        $packageNames = \App\Models\Package::pluck('name')->toArray();
 
-            $trxCount = Transaction::whereBetween('created_at', [$start, $end])->count();
+        foreach ($transactions as $trx) {
+            foreach ($trx->details as $detail) {
+                $name = $detail->item_name;
 
-            // Expense
-            $totalExpense = Expense::whereBetween('date', [$start->format('Y-m-d'), $end->format('Y-m-d')])
-                ->sum('amount');
+                // Filter out Zero-value legacy imports (Dummy Data)
+                // We only want REAL sales in the sales report.
+                if ($detail->subtotal <= 0) {
+                    continue;
+                }
 
-            $data[] = [
-                'month_name' => $start->translatedFormat('F'),
-                'trx_count' => $trxCount,
-                'income_membership' => $incomeMembership,
-                'income_product' => $incomeProduct,
-                'total_income' => $totalIncome,
-                'total_expense' => $totalExpense,
-                'net_profit' => $totalIncome - $totalExpense
-            ];
+                // Categorize
+                $category = 'PENJUALAN (PRODUK)';
+                if (in_array($name, $packageNames)) {
+                    $category = 'MEMBERSHIP';
+                } elseif ($trx->transaction_type === 'membership') {
+                    $category = 'MEMBERSHIP';
+                }
+
+                if (!isset($groupedSales[$category][$name])) {
+                    $groupedSales[$category][$name] = [
+                        'name' => $name,
+                        'qty' => 0,
+                        'total' => 0
+                    ];
+                }
+
+                $groupedSales[$category][$name]['qty'] += $detail->qty;
+                $groupedSales[$category][$name]['total'] += $detail->subtotal;
+            }
         }
+
+        // 3. Aggregate Monthly Income (Optional but useful) or Just Year Totals?
+        // User asked for "Overview products sold".
+        // Let's provide Totals.
 
         return view('reports.yearly_summary', [
             'year' => $this->year,
-            'data' => $data
+            'sales' => $groupedSales,
+            'totalIncome' => $transactions->sum('total_amount'),
+            'totalExpense' => $expenses->sum('amount'),
+            'netProfit' => $transactions->sum('total_amount') - $expenses->sum('amount')
         ]);
     }
 }
