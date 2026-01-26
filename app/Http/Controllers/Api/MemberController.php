@@ -8,10 +8,33 @@ use Illuminate\Http\Request;
 
 class MemberController extends Controller
 {
+    public function importLegacy(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls,csv,txt'
+        ]);
+
+        try {
+            \Maatwebsite\Excel\Facades\Excel::import(new \App\Imports\LegacyMembersImport, $request->file('file'));
+            return response()->json(['message' => 'Legacy data imported successfully!']);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Import failed: ' . $e->getMessage()], 500);
+        }
+    }
+
     public function index()
     {
-        $members = Member::orderBy('name', 'asc')->get();
+        // Natural Sort for "1 U", "2 U", "10 U"
+        // Extract number from string and sort by it
+        // MySQL: CAST(member_code AS UNSIGNED) -> picks up leading number
+        $members = Member::orderByRaw('CAST(member_code AS UNSIGNED) ASC')->get();
         return response()->json($members);
+    }
+
+    public function show($id)
+    {
+        $member = Member::findOrFail($id);
+        return response()->json(['data' => $member]);
     }
 
     public function store(Request $request)
@@ -35,7 +58,7 @@ class MemberController extends Controller
                 'phone' => $request->phone,
                 'category' => $package->category, // Auto-set category from package
                 'status' => 'active',
-                'current_expiry_date' => now()->addDays($package->duration_days),
+                'current_expiry_date' => now()->addDays((int) $package->duration_days),
             ]);
 
             // 2. Create Transaction (Income)
@@ -51,7 +74,7 @@ class MemberController extends Controller
                 'payment_method' => $request->payment_method,
                 'transaction_type' => 'membership',
                 'membership_start_date' => now(),
-                'membership_end_date' => now()->addDays($package->duration_days),
+                'membership_end_date' => now()->addDays((int) $package->duration_days),
             ]);
 
             // 3. Create Transaction Detail
@@ -92,6 +115,16 @@ class MemberController extends Controller
             }
         }
 
+        // If member was PENDING and we are changing the Member Code to something real (not PENDING-...)
+        // Then auto-activate the member.
+        if ($member->status === 'pending' && $request->has('member_code')) {
+            $newCode = $request->member_code;
+            if ($newCode !== $member->member_code && !str_starts_with($newCode, 'PENDING-')) {
+                // Auto Activate
+                $request->merge(['status' => 'active']);
+            }
+        }
+
         $member->update($request->all());
 
         return response()->json([
@@ -109,6 +142,13 @@ class MemberController extends Controller
         // But for "functionality delete", we will do simple delete or cascade.
         // Assuming simple delete for now.
 
+        // Fix: Delete related transactions first to avoid Foreign Key Constraint Violation
+        $transactions = \App\Models\Transaction::where('member_id', $id)->get();
+        foreach ($transactions as $transaction) {
+            $transaction->details()->delete();
+            $transaction->delete();
+        }
+
         $member->delete();
 
         return response()->json([
@@ -118,8 +158,19 @@ class MemberController extends Controller
 
     public function exportExcel()
     {
-        $filename = "members-rekap-" . date('d-m-Y') . ".xlsx";
-        return \Maatwebsite\Excel\Facades\Excel::download(new \App\Exports\MembersExport, $filename);
+        try {
+            $filename = "members-rekap-" . date('d-m-Y') . ".xlsx";
+            return \Maatwebsite\Excel\Facades\Excel::download(new \App\Exports\MembersExport, $filename);
+        } catch (\Exception $e) {
+            \Log::error('Member Export Error: ' . $e->getMessage());
+            \Log::error($e->getTraceAsString());
+            return response()->json([
+                'error' => 'Failed to generate export',
+                'message' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'file' => basename($e->getFile())
+            ], 500);
+        }
     }
 
     public function history($id)
@@ -154,10 +205,10 @@ class MemberController extends Controller
 
             if ($currentExpiry->gt($now)) {
                 $startDate = $currentExpiry->copy(); // Starts when old one ends
-                $newExpiry = $currentExpiry->addDays($package->duration_days);
+                $newExpiry = $currentExpiry->addDays((int) $package->duration_days);
             } else {
                 $startDate = $now->copy(); // Starts today
-                $newExpiry = $now->copy()->addDays($package->duration_days);
+                $newExpiry = $now->copy()->addDays((int) $package->duration_days);
             }
 
             // 2. Update Member

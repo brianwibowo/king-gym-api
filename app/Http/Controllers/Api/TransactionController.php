@@ -101,8 +101,28 @@ class TransactionController extends Controller
 
                 // LOGIKA B: Jika yang dibeli adalah Membership
                 $package = Package::where('name', $item['name'])->first();
-                if ($package && $request->member_id) {
-                    $member = Member::find($request->member_id);
+                if ($package) {
+                    // Check if Member ID is provided, IF NOT, Auto-Create "Pending" Member
+                    $memberId = $request->member_id;
+                    $isAutoCreated = false;
+
+                    if (!$memberId) {
+                        // Create Pending Member
+                        $newMember = Member::create([
+                            'name' => $request->customer_name ?: 'Guest Member',
+                            'member_code' => 'PENDING-' . time() . rand(100, 999),
+                            'status' => 'pending',
+                            'phone' => '-',
+                            'address' => '-'
+                        ]);
+                        $memberId = $newMember->id;
+                        $isAutoCreated = true;
+
+                        // Update transaction header to link to this new member
+                        $transaction->update(['member_id' => $memberId]);
+                    }
+
+                    $member = Member::find($memberId);
 
                     // Cek apakah member masih aktif atau sudah expired
                     $startDate = Carbon::now();
@@ -111,9 +131,27 @@ class TransactionController extends Controller
                         $startDate = Carbon::parse($member->current_expiry_date);
                     }
 
+                    // Keep pending status if auto-created, otherwise active
+                    $newStatus = $isAutoCreated ? 'pending' : 'active';
+
+                    // Allow pending members to become active ONLY if manually edited later? 
+                    // Or should they be active immediately for Gate Access? 
+                    // User said: "statusnya pending dan belum ada nomor membership". 
+                    // So we stick to 'pending'.
+
+                    // Use existing status if it was already active/pending, don't revert to active if pending?
+                    // Actually, if I buy renewal, it becomes active.
+                    // If AutoCreated, force pending.
+
                     $member->update([
-                        'status' => 'active',
-                        'current_expiry_date' => $startDate->addDays($package->duration_days)
+                        'status' => $isAutoCreated ? 'pending' : 'active',
+                        'current_expiry_date' => $startDate->copy()->addDays((int) $package->duration_days)
+                    ]);
+
+                    // IMPORTANT: Update Transaction with Membership Dates for History/Rollback
+                    $transaction->update([
+                        'membership_start_date' => $startDate,
+                        'membership_end_date' => $startDate->copy()->addDays((int) $package->duration_days)
                     ]);
                 }
             }
@@ -145,12 +183,42 @@ class TransactionController extends Controller
     public function destroy($id)
     {
         $transaction = Transaction::findOrFail($id);
+        $memberId = $transaction->member_id;
+
         // Optional: Restore stock if needed, but for now simple delete
         $transaction->details()->delete();
         $transaction->delete();
 
+        // RECALCULATE MEMBER STATUS if this was a membership transaction
+        if ($memberId && $transaction->transaction_type === 'membership') {
+            $member = Member::find($memberId);
+            if ($member) {
+                // Find the latest remaining membership transaction
+                $latestTrx = Transaction::where('member_id', $memberId)
+                    ->where('transaction_type', 'membership')
+                    ->orderBy('membership_end_date', 'desc') // Use end_date as priority
+                    ->orderBy('created_at', 'desc')
+                    ->first();
+
+                if ($latestTrx && $latestTrx->membership_end_date) {
+                    $expiry = Carbon::parse($latestTrx->membership_end_date);
+
+                    $member->update([
+                        'current_expiry_date' => $latestTrx->membership_end_date, // Sync with latest end date
+                        'status' => $expiry->isFuture() ? 'active' : 'inactive'
+                    ]);
+                } else {
+                    // No membership transactions left
+                    $member->update([
+                        'current_expiry_date' => null,
+                        'status' => 'inactive'
+                    ]);
+                }
+            }
+        }
+
         return response()->json([
-            'message' => 'Transaction deleted successfully'
+            'message' => 'Transaction deleted successfully, member status updated'
         ]);
     }
 }

@@ -19,6 +19,8 @@ class DailyShiftExport implements FromView, WithTitle, ShouldAutoSize
     {
         $this->date = $date; // Format Y-m-d
         $this->title = $title;
+        // Ensure locale is ID
+        Carbon::setLocale('id');
     }
 
     public function view(): View
@@ -63,7 +65,7 @@ class DailyShiftExport implements FromView, WithTitle, ShouldAutoSize
 
 
         return view('reports.daily_shift', [
-            'date' => Carbon::parse($this->date)->translatedFormat('l, d F Y'),
+            'date' => $this->date,
             'pagi' => $this->prepareShiftData($trxPagi, $expPagi),
             'sore' => $this->prepareShiftData($trxSore, $expSore),
             'grandTotalIncome' => $allTransactions->sum('total_amount'),
@@ -76,26 +78,35 @@ class DailyShiftExport implements FromView, WithTitle, ShouldAutoSize
     private function prepareShiftData($transactions, $expenses)
     {
         // A. Sales Breakdown (Membership vs Product Mix)
-        // Group by Item Name
-        $groupedSales = [];
+        $groupedSales = [
+            'MEMBERSHIP' => [],
+            'PENJUALAN (PRODUK)' => []
+        ];
+
+        // Fetch all package names for classification
+        $packageNames = \App\Models\Package::pluck('name')->toArray();
+
+        // Normalize package names for robust comparison (e.g. lowercase) if needed. 
+        // For now direct match.
 
         foreach ($transactions as $trx) {
             foreach ($trx->details as $detail) {
                 $name = $detail->item_name;
-                // If it's a membership, maybe categorize differently?
-                // User requirement: "MEMBERSHIP" section with "Penjualan | Jml | Harga | Pendapatan"
-                // Ideally we separate Membership items from Product items data.
 
-                // Let's try to infer type from transaction_type or item type?
-                // Transaction type is on Header.
-                $type = $trx->transaction_type == 'membership' ? 'MEMBERSHIP' : 'PENJUALAN (PRODUK)';
+                // Categorize based on Item Name (more accurate for mixed transactions)
+                // If it matches a Package Name -> MEMBERSHIP
+                // Else -> PENJUALAN (PRODUK)
 
-                if (!isset($groupedSales[$type])) {
-                    $groupedSales[$type] = [];
+                $category = 'PENJUALAN (PRODUK)';
+                if (in_array($name, $packageNames)) {
+                    $category = 'MEMBERSHIP';
+                } elseif ($trx->transaction_type === 'membership') {
+                    // Fallback: If transaction is purely membership but name mismatch?
+                    $category = 'MEMBERSHIP';
                 }
 
-                if (!isset($groupedSales[$type][$name])) {
-                    $groupedSales[$type][$name] = [
+                if (!isset($groupedSales[$category][$name])) {
+                    $groupedSales[$category][$name] = [
                         'name' => $name,
                         'qty' => 0,
                         'price' => $detail->price, // Unit price
@@ -103,8 +114,8 @@ class DailyShiftExport implements FromView, WithTitle, ShouldAutoSize
                     ];
                 }
 
-                $groupedSales[$type][$name]['qty'] += $detail->qty;
-                $groupedSales[$type][$name]['total'] += $detail->subtotal;
+                $groupedSales[$category][$name]['qty'] += $detail->qty;
+                $groupedSales[$category][$name]['total'] += $detail->subtotal;
             }
         }
 
@@ -116,19 +127,29 @@ class DailyShiftExport implements FromView, WithTitle, ShouldAutoSize
         ];
 
         foreach ($transactions as $trx) {
+            // Normalize method name
             $method = strtoupper($trx->payment_method);
+
+            // Map common variations if any (e.g. "TF" -> "TRANSFER")
+            if ($method === 'TF')
+                $method = 'TRANSFER';
+            if ($method === 'CASH')
+                $method = 'CASH'; // already upper
+            // If not in key list, maybe Group into 'TRANSFER' or add distinct?
+            // Client Req: Only Cash, QRIS, Transfer rows.
+
             if (isset($incomeByMethod[$method])) {
                 $incomeByMethod[$method] += $trx->total_amount;
             } else {
-                $incomeByMethod['OTHER'] = ($incomeByMethod['OTHER'] ?? 0) + $trx->total_amount;
+                // Should we dump into OTHER or one of the above? 
+                // Let's assume Transfer for any odd non-cash/non-qris
+                $incomeByMethod['TRANSFER'] += $trx->total_amount;
             }
         }
 
-        // Remove empty methods? User template shows specific ones. Keep 0 is fine.
-
         return [
-            'sales' => $groupedSales, // ['MEMBERSHIP' => [...], 'PENJUALAN' => [...]]
-            'income' => $incomeByMethod, // ['CASH' => 100, ...]
+            'sales' => $groupedSales,
+            'income' => $incomeByMethod,
             'incomeTotal' => $transactions->sum('total_amount'),
             'expenses' => $expenses,
             'expenseTotal' => $expenses->sum('amount'),

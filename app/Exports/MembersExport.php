@@ -25,18 +25,35 @@ class MembersExport implements FromCollection, WithHeadings, WithMapping, Should
         $this->maxDate = Carbon::now()->endOfMonth();
 
         // Optimized way: Get min/max from DB directly
-        $minTrx = \App\Models\Transaction::where('transaction_type', 'membership')
-            ->whereNotNull('membership_start_date')
+        // Min Date: Could be start_date OR end_date (for legacy)
+        $minStart = \App\Models\Transaction::where('transaction_type', 'membership')
             ->min('membership_start_date');
+            
+        $minEnd = \App\Models\Transaction::where('transaction_type', 'membership')
+            ->min('membership_end_date');
+            
+        // Pick the earliest of the two
+        $minTrx = $minStart;
+        if ($minEnd && (!$minStart || $minEnd < $minStart)) {
+            $minTrx = $minEnd;
+        }
 
         $maxTrx = \App\Models\Transaction::where('transaction_type', 'membership')
-            ->whereNotNull('membership_end_date')
             ->max('membership_end_date');
 
-        if ($minTrx)
-            $this->minDate = Carbon::parse($minTrx)->startOfMonth();
-        if ($maxTrx)
-            $this->maxDate = Carbon::parse($maxTrx)->endOfMonth();
+        if ($minTrx) {
+            $parsedMin = Carbon::parse($minTrx)->startOfMonth();
+            // Sanity check: Min date shouldn't be too old (e.g. < 2020)
+            if ($parsedMin->year < 2020) $parsedMin = Carbon::create(2020, 1, 1);
+            $this->minDate = $parsedMin;
+        }
+
+        if ($maxTrx) {
+            $parsedMax = Carbon::parse($maxTrx)->endOfMonth();
+            // Sanity check: Max date shouldn't be too far future (e.g. > 2030)
+            if ($parsedMax->year > 2030) $parsedMax = Carbon::create(2030, 12, 31);
+            $this->maxDate = $parsedMax;
+        }
 
         // Generate Headers
         $current = $this->minDate->copy();
@@ -51,10 +68,15 @@ class MembersExport implements FromCollection, WithHeadings, WithMapping, Should
         return Member::with([
             'transactions' => function ($q) {
                 $q->where('transaction_type', 'membership')
-                    ->whereNotNull('membership_start_date')
-                    ->orderBy('created_at', 'asc');
+                    ->where(function($query) {
+                        $query->whereNotNull('membership_start_date')
+                              ->orWhereNotNull('membership_end_date');
+                    })
+                    ->orderBy('membership_end_date', 'asc');
             }
-        ])->orderBy('name', 'asc')->get();
+        ])
+        ->orderByRaw('CAST(member_code AS UNSIGNED) ASC')
+        ->get();
     }
 
     public function headings(): array
@@ -79,35 +101,73 @@ class MembersExport implements FromCollection, WithHeadings, WithMapping, Should
         $matrixData = array_fill_keys($this->headers, '');
 
         foreach ($member->transactions as $trx) {
-            if (!$trx->membership_start_date || !$trx->membership_end_date)
-                continue;
+            // Case 1: Legacy (No Start Date) -> Only fill the End Date column
+            if (!$trx->membership_start_date && $trx->membership_end_date) {
+                 $end = Carbon::parse($trx->membership_end_date);
+                 $columnKey = $end->format('M-y');
+                 
+                 if (isset($matrixData[$columnKey])) {
+                     $matrixData[$columnKey] = $end->format('d/m/Y');
+                 }
+                 continue;
+            }
 
-            $start = Carbon::parse($trx->membership_start_date);
-            $end = Carbon::parse($trx->membership_end_date);
+            // Case 2: Normal (Has Range)
+            if ($trx->membership_start_date && $trx->membership_end_date) {
+                $start = Carbon::parse($trx->membership_start_date);
+                $end = Carbon::parse($trx->membership_end_date);
 
-            // Loop through each month covered by this transaction
-            // Logic: We start from the exact start date (e.g., 24/01/2026)
-            // And we increment by 1 month until we pass the end date.
+                // ITERATE BY CALENDAR MONTH to ensure we cover every month in the range
+                // Example: 26 Jan -> 25 Feb. We must hit Jan and Feb.
+                
+                $iterDate = $start->copy()->startOfMonth();
+                $targetMonth = $end->copy()->startOfMonth();
 
-            $curr = $start->copy();
+                while ($iterDate->lte($targetMonth)) {
+                    if ($iterDate->year > 2040) break;
 
-            // Limit loop to avoid infinite in bad data cases, though DB dates are standard
-            while ($curr->lte($end)) {
-                // Determine which column this date falls into
-                $columnKey = $curr->format('M-y');
+                    $columnKey = $iterDate->format('M-y');
+                    
+                    if (isset($matrixData[$columnKey])) {
+                        // Determine what date value to put in this cell
+                        // Ideally: The 'billing date' for this month.
+                        
+                        // 1. Calculate the projected date: Same DAY as Start Date
+                        // e.g. Start 26 Jan -> Candidate 26 Feb
+                        try {
+                            $candidate = $iterDate->copy()->day($start->day); 
+                        } catch (\Exception $e) {
+                            // Handle overflow (e.g. 30 Feb -> 1 Mar or 28 Feb)
+                            // Carbon usually handles this via strict mode dependent, but safely:
+                            $candidate = $iterDate->copy()->endOfMonth();
+                        }
+                        
+                        // 2. If Candidate is beyond the End Date, use End Date instead
+                        // Example: Renewal 26 Jan -> 25 Feb.
+                        // Jan: Candidate 26 Jan <= 25 Feb? Yes. Write 26/01.
+                        // Feb: Candidate 26 Feb > 25 Feb? Yes. Write 25/02 (End Date).
+                        
+                        if ($candidate->gt($end)) {
+                            $valueDate = $end;
+                        } else {
+                            // Also check if candidate is BEFORE start date (rare, but for first month)
+                            if ($candidate->lt($start)) {
+                                $valueDate = $start;
+                            } else {
+                                $valueDate = $candidate;
+                            }
+                        }
 
-                // Only fill if this column exists in our headers (it should)
-                if (isset($matrixData[$columnKey])) {
-                    // Logic: "Adaptive" date. 
-                    // If start is 24/01, next month becomes 24/02, etc.
-                    // $curr is already doing this via addMonth()!
-                    $matrixData[$columnKey] = $curr->format('d/m/Y');
+                        $matrixData[$columnKey] = $valueDate->format('d/m/Y');
+                    }
+
+                    $iterDate->addMonth();
                 }
-
-                $curr->addMonth();
             }
         }
 
-        return array_merge($fixedData, array_values($matrixData));
+        // Return fixed columns followed by matrix values in the headers' order
+        $matrixValues = array_values($matrixData);
+        return array_merge($fixedData, $matrixValues);
     }
 }

@@ -14,6 +14,7 @@ return new class extends Migration {
             $table->id();
             $table->decimal('amount', 15, 2);
             $table->string('description');
+            $table->string('category')->default('General'); // Added category
             $table->timestamp('date'); // User can set backdate
             $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete(); // Who inputted it
             $table->timestamps();

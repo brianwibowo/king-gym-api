@@ -15,11 +15,14 @@ use App\Http\Controllers\Api\DashboardController;
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
 
+
+
 // 2. Grup yang harus Login (Admin & Superadmin bisa masuk)
 Route::middleware('auth:sanctum')->group(function () {
 
     // Fitur Umum (Dua-duanya bisa)
     Route::get('/members', [MemberController::class, 'index']);
+    Route::get('/members/{id}', [MemberController::class, 'show']); // New Route
     Route::post('/members', [MemberController::class, 'store']);
     Route::put('/members/{id}', [MemberController::class, 'update']);
     Route::delete('/members/{id}', [MemberController::class, 'destroy']);
@@ -43,7 +46,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Member Export
     Route::get('/members/export', [MemberController::class, 'exportExcel']);
-
+    Route::get('/export/members', [MemberController::class, 'exportExcel']); // Alternative route that actually works
+    Route::post('/members/import', [MemberController::class, 'importLegacy']);
+    
     Route::get('/export/excel', [ReportController::class, 'exportExcel']);
     Route::get('/export/pdf', [ReportController::class, 'exportPdf']);
 

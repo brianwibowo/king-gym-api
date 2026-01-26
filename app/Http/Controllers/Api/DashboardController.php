@@ -143,6 +143,7 @@ class DashboardController extends Controller
                 DB::raw('SUM(transaction_details.subtotal) as total_revenue'),
                 DB::raw('MAX(products.stock) as current_stock') // Use MAX (since grouped by name, stock should be same)
             )
+            ->where('transactions.total_amount', '>', 0) // Fix: Exclude legacy imports (0 value)
             ->groupBy('transaction_details.item_name');
 
         // Apply Date Filter
